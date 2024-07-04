@@ -57,7 +57,7 @@ func DrawRing(c *Consistent, key string) {
 	}
 
 	//Key drawing
-	angle := 2 * math.Pi * float64(c.GetHasher().Xxhash1024([]byte(key))) / 1024
+	angle := 2 * math.Pi * float64(c.GetHasher().hash_to_used([]byte(key))) / 1024
 	x := S/2 + float64(S/3)*math.Cos(angle)
 	y := S/2 + float64(S/3)*math.Sin(angle)
 

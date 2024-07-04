@@ -6,28 +6,36 @@ import (
 	"sort"
 
 	"github.com/cespare/xxhash"
+	"github.com/dgryski/go-farm"
+	"github.com/spaolacci/murmur3"
 )
 
 type hasher struct{}
 
-func (hs hasher) Sum64(data []byte) uint64 {
+func Sum64(data []byte) uint64 {
 	h := fnv.New64()
 	h.Write(data)
-	return h.Sum64()
+	return h.Sum64() % 1024
 }
 
-func (hs hasher) Xxhash(data []byte) uint64 {
-	return xxhash.Sum64(data)
-}
-
-func (hs hasher) Xxhash1024(data []byte) uint64 {
+func Xxhash1024(data []byte) uint64 {
 	return xxhash.Sum64(data) % 1024
 }
 
+func MurmurHash(data []byte) uint64 {
+	return murmur3.Sum64(data) % 1024
+}
+
+func FarmHash(data []byte) uint64 {
+	return farm.Hash64(data) % 1024
+}
+
+func (hs hasher) hash_to_used(data []byte) uint64 { // change the hash function here
+	return Xxhash1024(data)
+}
+
 type Hasher interface {
-	Sum64([]byte) uint64
-	Xxhash([]byte) uint64
-	Xxhash1024([]byte) uint64
+	hash_to_used([]byte) uint64
 }
 
 type Consistent struct {
@@ -58,7 +66,7 @@ func (c *Consistent) GetHasher() Hasher {
 func (c *Consistent) AddServer(server string) {
 	for i := 0; i < c.replicationFactor; i++ {
 		key := []byte(fmt.Sprintf("%s%d", server, i))
-		h := c.hasher.Xxhash1024(key)
+		h := c.hasher.hash_to_used(key)
 		c.ring[h] = server
 		c.sortedSet = append(c.sortedSet, h)
 	}
@@ -92,7 +100,7 @@ func (c *Consistent) redirectKeyFromAddServer(server string) {
 func (c *Consistent) DelServer(server string) {
 	for i := 0; i < c.replicationFactor; i++ { // O(n) * O(n)
 		key := []byte(fmt.Sprintf("%s%d", server, i))
-		h := c.hasher.Xxhash1024(key)
+		h := c.hasher.hash_to_used(key)
 		delete(c.ring, h)
 		c.delSlice(h)
 	}
@@ -124,7 +132,7 @@ func (c *Consistent) redirectKeyFromRemoveServer(server string) {
 
 func (c *Consistent) MapKey(k string) string { //O(logn)
 	key := []byte(k)
-	hash := c.hasher.Xxhash1024(key)
+	hash := c.hasher.hash_to_used(key)
 
 	idx := sort.Search(len(c.sortedSet), func(i int) bool {
 		return c.sortedSet[i] >= hash

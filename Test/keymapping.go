@@ -19,7 +19,7 @@ func main() {
 	cnt_three := 0
 	cnt_four := 0
 
-	for i := 0; i < 1000000; i++ {
+	for i := 0; i < 100000; i++ {
 		key := fmt.Sprintf(uuid.New().String())
 		server := c.MapKey(key)
 		switch server {
