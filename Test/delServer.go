@@ -22,7 +22,7 @@ func main() {
 	//c.TraverseMapping()
 
 	fmt.Println("After deleting Server1 :---------")
-	c.DelServer("Server1")
+	c.DelServer("Server5")
 
 	//c.TraverseMapping()
 	elapsed := time.Since(start)
