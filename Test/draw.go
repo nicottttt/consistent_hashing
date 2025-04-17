@@ -12,10 +12,10 @@ func main() {
 	server2, _ := uuid.Parse("5142f8f6-e676-4859-b1c5-03b41912747d")
 	server3, _ := uuid.Parse("230a3a8b-f9b7-42f2-a99c-25cb6038dea2")
 	server4, _ := uuid.Parse("ae9fb244-e985-4254-bc09-54a3aab47060")
-	c.AddServer(server1.String(), 1) // Add server1 with 13 virtual nodes
-	c.AddServer(server2.String(), 1)
-	c.AddServer(server3.String(), 1)
-	c.AddServer(server4.String(), 1)
+	c.AddServer(server1.String(), 2) // Add server1 with 13 virtual nodes
+	c.AddServer(server2.String(), 2)
+	c.AddServer(server3.String(), 2)
+	c.AddServer(server4.String(), 2)
 
 	// key1 := "key222222"
 	// key_server1 := c.MapKey(key1)
