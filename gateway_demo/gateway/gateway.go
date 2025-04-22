@@ -132,7 +132,7 @@ func (cr *ConsistentRouter) run() {
 			id_hashkey := consistent.Hashkey{Id: sendId.Id}
 			var target string
 			if _, ok := router.GetMapping()[id_hashkey]; !ok {
-				fmt.Println("[Router] Adding key to router:", id_hashkey)
+				fmt.Println("[Router] Adding route to router:", id_hashkey)
 				router.AddKey(id_hashkey)
 			}
 			target = router.GetMapping()[id_hashkey]
