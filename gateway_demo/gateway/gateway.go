@@ -6,6 +6,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"consistent.com/m/consistent"
@@ -35,7 +38,7 @@ type ConsistentRouter struct {
 	workerAlive bool
 }
 
-var router *consistent.Consistent
+var cr *ConsistentRouter
 
 func InitConsistentRouter(replicationFactor int) *ConsistentRouter {
 	ring := consistent.NewRing(replicationFactor)
@@ -48,36 +51,73 @@ func InitConsistentRouter(replicationFactor int) *ConsistentRouter {
 	}
 }
 
-func main() {
-	cr := InitConsistentRouter(3)
-	go cr.run()
-	router = cr.ring
+func addExistingNode(cli *clientv3.Client) {
+	resp, err := cli.Get(context.TODO(), "/nodes/", clientv3.WithPrefix())
+	if err != nil {
+		log.Println("Failed to list nodes:", err)
+		return
+	}
 
-	//Etcd
+	for _, kv := range resp.Kvs {
+		addr := string(kv.Key[len("/nodes/"):])
+		fmt.Println("Added node:", addr)
+		cr.AddNode(addr)
+	}
+}
+
+func etcdWatcher() {
 	cli, _ := clientv3.New(clientv3.Config{
 		Endpoints:   []string{"localhost:2379"},
 		DialTimeout: 5 * time.Second,
 	})
 	defer cli.Close()
-
-	go func() {
-		rch := cli.Watch(context.Background(), "/nodes/", clientv3.WithPrefix())
-		for wresp := range rch {
-			for _, ev := range wresp.Events {
-				addr := string(ev.Kv.Key[len("/nodes/"):])
-				switch ev.Type {
-				case clientv3.EventTypePut:
-					fmt.Println("Added node:", addr)
-					cr.AddNode(addr)
-				case clientv3.EventTypeDelete:
-					fmt.Println("Removed node:", addr)
-					cr.RemoveNode(addr)
-				}
+	addExistingNode(cli)
+	rch := cli.Watch(context.Background(), "/nodes/", clientv3.WithPrefix())
+	for wresp := range rch {
+		for _, ev := range wresp.Events {
+			addr := string(ev.Kv.Key[len("/nodes/"):])
+			switch ev.Type {
+			case clientv3.EventTypePut:
+				fmt.Println("Added node:", addr)
+				cr.AddNode(addr)
+			case clientv3.EventTypeDelete:
+				fmt.Println("Removed node:", addr)
+				cr.RemoveNode(addr)
 			}
 		}
-	}()
+	}
+}
 
-	// Send
+func consistentRouterWatcher() {
+	for {
+		select {
+		case op := <-cr.opChan:
+			switch op.Type {
+			case OperationAdd:
+				cr.ring.AddServer(op.Node)
+				fmt.Println("[Router] Added node:", op.Node)
+			case OperationRemove:
+				cr.ring.DelServer(op.Node)
+				fmt.Println("[Router] Removed node:", op.Node)
+			}
+		case sendId := <-cr.sendChan:
+			id_hashkey := consistent.Hashkey{Id: sendId.Id}
+			var target string
+			if _, ok := cr.ring.GetMapping()[id_hashkey]; !ok {
+				fmt.Println("[Router] Adding route to router:", id_hashkey)
+				cr.ring.AddKey(id_hashkey)
+			}
+			target = cr.ring.GetMapping()[id_hashkey]
+			_ = sendUDP(target, sendId.Id)
+
+		case <-cr.stopChan:
+			fmt.Println("[Router] Stopping router worker...")
+			return
+		}
+	}
+}
+
+func httpWatcher() {
 	http.HandleFunc("/route", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		if id == "" {
@@ -91,9 +131,7 @@ func main() {
 			cr.Send(id)
 			fmt.Fprintf(w, "Node %s queued for sending\n", id)
 		}
-
 	})
-
 	fmt.Println("Gateway listening on port 8080")
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
@@ -110,7 +148,7 @@ func sendUDP(addr string, msg string) error {
 
 	localAddr := &net.UDPAddr{
 		IP:   net.ParseIP("127.0.0.1"),
-		Port: 0, // 系统分配端口
+		Port: 1234, // 系统分配端口
 	}
 
 	conn, err := net.DialUDP("udp", localAddr, remoteAddr)
@@ -130,35 +168,6 @@ func sendUDP(addr string, msg string) error {
 	return nil
 }
 
-func (cr *ConsistentRouter) run() {
-	for {
-		select {
-		case op := <-cr.opChan:
-			switch op.Type {
-			case OperationAdd:
-				cr.ring.AddServer(op.Node)
-				fmt.Println("[Router] Added node:", op.Node)
-			case OperationRemove:
-				cr.ring.DelServer(op.Node)
-				fmt.Println("[Router] Removed node:", op.Node)
-			}
-		case sendId := <-cr.sendChan:
-			id_hashkey := consistent.Hashkey{Id: sendId.Id}
-			var target string
-			if _, ok := router.GetMapping()[id_hashkey]; !ok {
-				fmt.Println("[Router] Adding route to router:", id_hashkey)
-				router.AddKey(id_hashkey)
-			}
-			target = router.GetMapping()[id_hashkey]
-			_ = sendUDP(target, "hello")
-
-		case <-cr.stopChan:
-			fmt.Println("[Router] Stopping router worker...")
-			return
-		}
-	}
-}
-
 func (cr *ConsistentRouter) AddNode(node string) {
 	cr.opChan <- Operation{Type: OperationAdd, Node: node}
 }
@@ -169,4 +178,23 @@ func (cr *ConsistentRouter) RemoveNode(node string) {
 
 func (cr *ConsistentRouter) Send(id string) {
 	cr.sendChan <- Send{Id: id}
+}
+
+func main() {
+	cr = InitConsistentRouter(3)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Watch consistent router events
+	go consistentRouterWatcher()
+
+	//Watch etcd events
+	go etcdWatcher()
+
+	// Watch http events
+	go httpWatcher()
+
+	<-ctx.Done()
+	fmt.Println("Received termination signal. Shutting down gracefully.")
 }
