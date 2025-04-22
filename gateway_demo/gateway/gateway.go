@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"time"
 
 	"consistent.com/m/consistent"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 const (
@@ -50,6 +53,30 @@ func main() {
 	go cr.run()
 	router = cr.ring
 
+	//Etcd
+	cli, _ := clientv3.New(clientv3.Config{
+		Endpoints:   []string{"localhost:2379"},
+		DialTimeout: 5 * time.Second,
+	})
+	defer cli.Close()
+
+	go func() {
+		rch := cli.Watch(context.Background(), "/nodes/", clientv3.WithPrefix())
+		for wresp := range rch {
+			for _, ev := range wresp.Events {
+				addr := string(ev.Kv.Key[len("/nodes/"):])
+				switch ev.Type {
+				case clientv3.EventTypePut:
+					fmt.Println("Added node:", addr)
+					cr.AddNode(addr)
+				case clientv3.EventTypeDelete:
+					fmt.Println("Removed node:", addr)
+					cr.RemoveNode(addr)
+				}
+			}
+		}
+	}()
+
 	// Send
 	http.HandleFunc("/route", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
@@ -67,19 +94,6 @@ func main() {
 
 	})
 
-	// ADD
-	http.HandleFunc("/add", func(w http.ResponseWriter, r *http.Request) {
-		node := r.URL.Query().Get("node")
-		cr.AddNode(node)
-		fmt.Fprintf(w, "Node %s queued for addition\n", node)
-	})
-
-	// REMOVE
-	http.HandleFunc("/remove", func(w http.ResponseWriter, r *http.Request) {
-		node := r.URL.Query().Get("node")
-		cr.RemoveNode(node)
-		fmt.Fprintf(w, "Node %s queued for removal\n", node)
-	})
 	fmt.Println("Gateway listening on port 8080")
 
 	log.Fatal(http.ListenAndServe(":8080", nil))

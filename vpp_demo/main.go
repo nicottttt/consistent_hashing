@@ -8,10 +8,45 @@ import (
 	"go.fd.io/govpp"
 	"go.fd.io/govpp/api"
 
+	"mygit.com/consistent_hashing/vpp_demo/consistent"
 	"mygit.com/consistent_hashing/vpp_demo/vppbinapi/fib_types"
 	"mygit.com/consistent_hashing/vpp_demo/vppbinapi/ip_session_redirect"
 	"mygit.com/consistent_hashing/vpp_demo/vppbinapi/ip_types"
 )
+
+const (
+	OperationAdd int = iota
+	OperationRemove
+)
+
+type ServerOperation struct {
+	Type int
+	Node string
+	// IP address
+}
+
+type ClientOperation struct {
+	Id string
+}
+
+type ConsistentRouter struct {
+	ring        *consistent.Consistent
+	serverChan  chan ServerOperation
+	clientChan  chan ClientOperation
+	stopChan    chan struct{}
+	workerAlive bool
+}
+
+func InitConsistentRouter(replicationFactor int) *ConsistentRouter {
+	ring := consistent.NewRing(replicationFactor)
+	return &ConsistentRouter{
+		ring:        ring,
+		serverChan:  make(chan ServerOperation, 100),
+		clientChan:  make(chan ClientOperation, 100),
+		stopChan:    make(chan struct{}),
+		workerAlive: false,
+	}
+}
 
 func addSourceBasedRouting(ch api.Channel, srcIP, nextHop string, tableIndex uint32) error {
 	// IP address validation
@@ -65,6 +100,37 @@ func addSourceBasedRouting(ch api.Channel, srcIP, nextHop string, tableIndex uin
 	return nil
 }
 
+func (cr *ConsistentRouter) ConsistentRouterWatch() {
+	for {
+		select {
+		case server := <-cr.serverChan: // Add and del server
+			switch server.Type {
+			case OperationAdd:
+				cr.ring.AddServer(server.Node)
+				fmt.Println("[Router] Added node:", server.Node)
+			case OperationRemove:
+				cr.ring.DelServer(server.Node)
+				fmt.Println("[Router] Removed node:", server.Node)
+			}
+		case client := <-cr.clientChan: // client register here, form mapping
+			id_hashkey := consistent.Hashkey{Id: client.Id}
+			var target string
+			if _, ok := cr.ring.GetMapping()[id_hashkey]; !ok {
+				fmt.Println("[Router] Adding route to router:", id_hashkey)
+				cr.ring.AddKey(id_hashkey)
+			}
+			target = cr.ring.GetMapping()[id_hashkey]
+			fmt.Printf("[Router] Sending to target: %s\n", target)
+			// TODO:
+			// write actuall routes in VPP using ip session redirect
+
+		case <-cr.stopChan:
+			fmt.Println("[Router] Stopping router worker...")
+			return
+		}
+	}
+}
+
 func main() {
 	// Connect to VPP
 	conn, err := govpp.Connect("/run/vpp/api.sock")
@@ -85,6 +151,11 @@ func main() {
 		fmt.Printf("Could not open API channel: %s\n", err)
 		os.Exit(1)
 	}
+
+	cr := InitConsistentRouter(3)
+
+	// Start watching the event for add/del routes
+	go cr.ConsistentRouterWatch()
 
 	err = addSourceBasedRouting(ch, "10.240.165.1", "10.0.0.2", 0)
 	if err != nil {

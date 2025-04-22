@@ -1,46 +1,56 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net"
 	"os"
-	"strconv"
+	"time"
+
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run server.go [port]")
-		return
+	if len(os.Args) != 2 {
+		log.Fatal("Usage: server <ip:port>")
 	}
-	port := os.Args[1]
-	portNum, err := strconv.Atoi(port)
+	addr := os.Args[1]
+
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   []string{"localhost:2379"},
+		DialTimeout: 5 * time.Second,
+	})
 	if err != nil {
-		panic(err)
+		log.Fatal("Connect to etcd failed:", err)
+	}
+	defer cli.Close()
+
+	// 注册服务到 etcd
+	lease, _ := cli.Grant(context.TODO(), 10)
+	_, err = cli.Put(context.TODO(), "/nodes/"+addr, "", clientv3.WithLease(lease.ID))
+	if err != nil {
+		log.Fatal("Put to etcd failed:", err)
 	}
 
-	addr := net.UDPAddr{
-		Port: portNum,
-		IP:   net.ParseIP("127.0.0.1"),
-	}
+	// 自动续租
+	ch, _ := cli.KeepAlive(context.TODO(), lease.ID)
+	go func() {
+		for range ch {
+			// 保活中
+		}
+	}()
 
-	conn, err := net.ListenUDP("udp", &addr)
-	if err != nil {
-		panic(err)
-	}
+	// UDP 监听
+	udpAddr, _ := net.ResolveUDPAddr("udp", addr)
+	conn, _ := net.ListenUDP("udp", udpAddr)
 	defer conn.Close()
 
-	fmt.Printf("UDP server listening on port %d\n", portNum)
+	fmt.Println("Listening UDP at", addr)
 
 	buf := make([]byte, 1024)
 	for {
-		n, remoteAddr, err := conn.ReadFromUDP(buf)
-		if err != nil {
-			fmt.Println("Error reading:", err)
-			continue
-		}
-		fmt.Printf("Connection establish\n")
-
-		msg := string(buf[:n])
-		fmt.Printf("Received from %s: %s\n", remoteAddr, msg)
+		n, remote, _ := conn.ReadFromUDP(buf)
+		fmt.Printf("From %s: %s\n", remote, string(buf[:n]))
 	}
 }

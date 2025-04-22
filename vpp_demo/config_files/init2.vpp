@@ -1,0 +1,17 @@
+set interface ip address eth0 10.240.167.1/16
+set interface state eth0 up
+
+create host-interface name veth-vpp1
+set interface ip address host-veth-vpp1 10.0.1.1/24
+set interface state host-veth-vpp1 up
+ip route add 10.0.1.2/32 via host-veth-vpp1
+
+create host-interface name veth-vpp2
+set interface ip address host-veth-vpp2 10.0.2.1/24
+set interface state host-veth-vpp2 up
+ip route add 10.0.2.2/32 via host-veth-vpp2
+
+create host-interface name veth-vpp3
+set interface ip address host-veth-vpp3 10.0.3.1/24
+set interface state host-veth-vpp3 up
+ip route add 10.0.3.2/32 via host-veth-vpp3
