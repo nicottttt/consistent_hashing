@@ -71,7 +71,11 @@ func etcdWatcher() {
 		DialTimeout: 5 * time.Second,
 	})
 	defer cli.Close()
+
+	// Before gateway setup, if there is already a node in etcd, add it to the consistent hash ring
 	addExistingNode(cli)
+
+	// Watch for changes in the etcd nodes
 	rch := cli.Watch(context.Background(), "/nodes/", clientv3.WithPrefix())
 	for wresp := range rch {
 		for _, ev := range wresp.Events {
@@ -137,6 +141,22 @@ func httpWatcher() {
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
+func testWatcher() {
+	http.HandleFunc("/mapping", func(w http.ResponseWriter, r *http.Request) {
+		cr.ring.TraverseMapping()
+	})
+
+	http.HandleFunc("/serverlist", func(w http.ResponseWriter, r *http.Request) {
+		cr.ring.TraverseServerList()
+	})
+
+	http.HandleFunc("/hashring", func(w http.ResponseWriter, r *http.Request) {
+		cr.ring.TraverseHashRing()
+	})
+
+}
+
+// TODO: change send udp to just redirect the packet
 func sendUDP(addr string, msg string) error {
 	fmt.Println("Preparing to send UDP to", addr, "with msg:", msg)
 
@@ -194,6 +214,9 @@ func main() {
 
 	// Watch http events
 	go httpWatcher()
+
+	// Test watcher
+	go testWatcher()
 
 	<-ctx.Done()
 	fmt.Println("Received termination signal. Shutting down gracefully.")

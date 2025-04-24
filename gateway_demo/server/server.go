@@ -15,12 +15,8 @@ import (
 
 var ring *consistent.Consistent
 
-func etcdWatcher() {
-	cli, _ := clientv3.New(clientv3.Config{
-		Endpoints:   []string{"localhost:2379"},
-		DialTimeout: 5 * time.Second,
-	})
-	defer cli.Close()
+func etcdWatcher(cli *clientv3.Client) {
+
 	rch := cli.Watch(context.Background(), "/nodes/", clientv3.WithPrefix())
 	for wresp := range rch {
 		for _, ev := range wresp.Events {
@@ -71,24 +67,25 @@ func registerNode(cli *clientv3.Client, addr string) {
 
 func main() {
 	ring = consistent.NewRing(3)
-	if len(os.Args) != 2 {
-		log.Fatal("Usage: server <ip:port>")
+	if len(os.Args) != 3 {
+		log.Fatal("Usage: server <ip:port> <etcd_port>")
 	}
 	addr := os.Args[1]
 
+	// 注册服务到 etcd
+	port := os.Args[2]
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   []string{"localhost:2379"},
+		Endpoints:   []string{"localhost:" + port},
 		DialTimeout: 5 * time.Second,
 	})
 	if err != nil {
 		log.Fatal("Connect to etcd failed:", err)
 	}
 	defer cli.Close()
-
-	// 注册服务到 etcd
 	registerNode(cli, addr)
 
-	go etcdWatcher()
+	// Etcd 监听
+	go etcdWatcher(cli)
 
 	// UDP 监听
 	udpAddr, _ := net.ResolveUDPAddr("udp", addr)

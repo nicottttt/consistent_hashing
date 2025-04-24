@@ -59,11 +59,20 @@ func addSourceBasedRouting(ch api.Channel, srcIP, nextHop string, tableIndex uin
 		return fmt.Errorf("invalid next-hop IP address: %s", nextHop)
 	}
 
-	match := make([]byte, 4)
-	copy(match, srcAddr.To4())
+	// TODO: wrong here
 
+	// match := []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	// 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	// 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0xf0, 0xa5, 0x01, 0x00, 0x00}
+	match := make([]byte, 40)
+	copy(match[12:16], srcAddr.To4())
+
+	// Prepare next-hop
 	var nhAddrUnion ip_types.AddressUnion
 	copy(nhAddrUnion.XXX_UnionData[:4], nhAddr.To4())
+
+	// TODO: fix this
+	// tuple := types.New5Tuple(types.TCP, net.ParseIP(srcIP), 0, net.ParseIP("0.0.0.0"), 0)
 
 	fibPath := fib_types.FibPath{
 		SwIfIndex:  2,          // Interface index (example value)
@@ -82,8 +91,8 @@ func addSourceBasedRouting(ch api.Channel, srcIP, nextHop string, tableIndex uin
 		TableIndex:  tableIndex,
 		OpaqueIndex: 0, // Default value
 		Proto:       fib_types.FIB_API_PATH_NH_PROTO_IP4,
-		IsPunt:      false, // Forward traffic, not punt
-		MatchLen:    4,     // Length of IP address in bytes
+		IsPunt:      false,
+		MatchLen:    uint8(len(match)),
 		Match:       match,
 		NPaths:      1,
 		Paths:       []fib_types.FibPath{fibPath},
